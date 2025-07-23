@@ -1,0 +1,84 @@
+parameters:
+- name: buildConfiguration
+  type: string
+  default: 'Release'
+
+stages:
+- stage: buildArtifacts
+  displayName: Build Artifacts
+  jobs:
+
+  - job: buildNuGetPack
+    displayName: Build NuGet Pack(s)
+    steps:
+
+    - checkout: self
+
+    - task: NuGetAuthenticate@1
+      displayName: Authenticate with Azure Artifacts
+
+    - task: UseDotNet@2
+      displayName: 'Install .NET SDK'
+      inputs:
+        version: $(dotNetVersion) # Note: the dotNetVersion variable should be defined in the build-variables.yml file of the calling repository.
+        performMultiLevelLookup: true
+        includePreviewVersions: true
+
+    - task: DotNetCoreCLI@2
+      displayName: Restore NuGet Packages
+      inputs:
+        command: 'restore'
+        projects: '**/*.sln'
+        feedsToUse: 'config'
+        nugetConfigPath: 'nuget.config'
+
+    - task: DotNetCoreCLI@2
+      displayName: Build VS Solution
+      inputs:
+        command: build
+        projects: '**/*.sln'
+        arguments: '--configuration ${{ parameters.buildConfiguration}}'
+
+    - task: DotNetCoreCLI@2
+      displayName: Run Tests
+      inputs:
+        command: test
+        projects: '**/*.sln'
+        arguments: '--configuration ${{ parameters.buildConfiguration}} --collect "Code coverage" --settings CodeCoverage.runsettings'
+        publishTestResults: true
+
+    - task: PowerShell@2
+      displayName: 'Adjust NuGet Version #'
+      inputs:
+        targetType: inline
+        pwsh: true
+        script: |
+
+          # NuGet version numbers cannot have leading zeros in the build number segment
+          $versionNumber = '$(Build.BuildNumber)'
+          $versionNumberParts = $versionNumber -split '\.'
+          $versionNumberParts[-1] = $versionNumberParts[-1].TrimStart("0")
+          $nugetVersionNumber = $versionNumberParts -join '.'
+
+          Write-Host "Version number = $versionNumber"
+          Write-Host "NuGet version number = $nugetVersionNumber"
+
+          # Create a pipeline variable so later tasks can reference the NuGet version number
+          Write-Host "##vso[task.setvariable variable=nugetVersionNumber;]$nugetVersionNumber"
+
+    - task: DotNetCoreCLI@2
+      displayName: Package NuGet Pack(s)
+      inputs:
+        command: pack
+        configuration: ${{ parameters.buildConfiguration}}
+        nobuild: true
+        versioningScheme: byEnvVar
+        versionEnvVar: nugetVersionNumber
+        packDirectory: $(build.artifactStagingDirectory)
+    
+    - task: DotNetCoreCLI@2
+      displayName: Push to SizeOf8 Feed
+      inputs:
+        command: push
+        nuGetFeedType: external
+        publishFeedCredentials: SizeOf8 NuGet Feed
