@@ -1,84 +1,49 @@
-parameters:
-- name: buildConfiguration
-  type: string
-  default: 'Release'
+trigger:
+  - main
 
-stages:
-- stage: buildArtifacts
-  displayName: Build Artifacts
-  jobs:
+pool:
+  vmImage: 'windows-latest'
 
-  - job: buildNuGetPack
-    displayName: Build NuGet Pack(s)
-    steps:
+variables:
+  buildConfiguration: 'Release'
+  outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
 
-    - checkout: self
+steps:
 
-    - task: NuGetAuthenticate@1
-      displayName: Authenticate with Azure Artifacts
+# Install the required .NET SDK version
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '7.0.x'  # Replace with the .NET SDK version you need
 
-    - task: UseDotNet@2
-      displayName: 'Install .NET SDK'
-      inputs:
-        version: $(dotNetVersion) # Note: the dotNetVersion variable should be defined in the build-variables.yml file of the calling repository.
-        performMultiLevelLookup: true
-        includePreviewVersions: true
+# Install NuGet CLI
+- task: NuGetToolInstaller@1
 
-    - task: DotNetCoreCLI@2
-      displayName: Restore NuGet Packages
-      inputs:
-        command: 'restore'
-        projects: '**/*.sln'
-        feedsToUse: 'config'
-        nugetConfigPath: 'nuget.config'
+# Restore dependencies
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'restore'
+    projects: '**/*.csproj'
 
-    - task: DotNetCoreCLI@2
-      displayName: Build VS Solution
-      inputs:
-        command: build
-        projects: '**/*.sln'
-        arguments: '--configuration ${{ parameters.buildConfiguration}}'
+# Build the project
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'build'
+    projects: '**/*.csproj'
+    arguments: '--configuration $(buildConfiguration)'
 
-    - task: DotNetCoreCLI@2
-      displayName: Run Tests
-      inputs:
-        command: test
-        projects: '**/*.sln'
-        arguments: '--configuration ${{ parameters.buildConfiguration}} --collect "Code coverage" --settings CodeCoverage.runsettings'
-        publishTestResults: true
+# Create the NuGet package
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'pack'
+    packagesToPack: '**/*.csproj'
+    configuration: '$(buildConfiguration)'
+    outputDir: '$(outputDir)'
 
-    - task: PowerShell@2
-      displayName: 'Adjust NuGet Version #'
-      inputs:
-        targetType: inline
-        pwsh: true
-        script: |
-
-          # NuGet version numbers cannot have leading zeros in the build number segment
-          $versionNumber = '$(Build.BuildNumber)'
-          $versionNumberParts = $versionNumber -split '\.'
-          $versionNumberParts[-1] = $versionNumberParts[-1].TrimStart("0")
-          $nugetVersionNumber = $versionNumberParts -join '.'
-
-          Write-Host "Version number = $versionNumber"
-          Write-Host "NuGet version number = $nugetVersionNumber"
-
-          # Create a pipeline variable so later tasks can reference the NuGet version number
-          Write-Host "##vso[task.setvariable variable=nugetVersionNumber;]$nugetVersionNumber"
-
-    - task: DotNetCoreCLI@2
-      displayName: Package NuGet Pack(s)
-      inputs:
-        command: pack
-        configuration: ${{ parameters.buildConfiguration}}
-        nobuild: true
-        versioningScheme: byEnvVar
-        versionEnvVar: nugetVersionNumber
-        packDirectory: $(build.artifactStagingDirectory)
-    
-    - task: DotNetCoreCLI@2
-      displayName: Push to SizeOf8 Feed
-      inputs:
-        command: push
-        nuGetFeedType: external
-        publishFeedCredentials: SizeOf8 NuGet Feed
+# Push the package to Azure Artifacts
+- task: NuGetCommand@2
+  inputs:
+    command: 'push'
+    packagesToPush: '$(outputDir)/*.nupkg'
+    publishVstsFeed: 'SuperRandom/SizeOf8'  # Replace with your feed path
+    allowPackageConflicts: true
