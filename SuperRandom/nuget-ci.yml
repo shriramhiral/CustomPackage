@@ -1,6 +1,9 @@
 trigger:
   - main
 
+pool:
+  vmImage: Default
+
 variables:
   buildConfiguration: 'Release'
   outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
