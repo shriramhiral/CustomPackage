@@ -1,9 +1,6 @@
 trigger:
   - main
 
-pool:
-  vmImage: 'windows-latest'
-
 variables:
   buildConfiguration: 'Release'
   outputDir: '$(Build.ArtifactStagingDirectory)/nuget'
